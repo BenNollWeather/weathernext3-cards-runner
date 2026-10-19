@@ -97,6 +97,31 @@ Resources:
           RetryPolicy:
             MaximumRetryAttempts: 3
             MaximumEventAgeInSeconds: 900
+          DeadLetterConfig:
+            Arn: !GetAtt FailedDispatchQueue.Arn
+
+  # Failed GitHub calls land here with the HTTP error code and message
+  # (message attributes ERROR_CODE / ERROR_MESSAGE), kept for 4 days.
+  FailedDispatchQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${RuleName}-failed"
+      MessageRetentionPeriod: 345600
+
+  FailedDispatchQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref FailedDispatchQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt FailedDispatchQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt DispatchRule.Arn
 
 Outputs:
   ConnectionArn:
@@ -104,3 +129,5 @@ Outputs:
     Value: !If [CreateConnection, !GetAtt GitHubConnection.Arn, !Ref ExistingConnectionArn]
   RuleName:
     Value: !Ref DispatchRule
+  FailedDispatchQueueUrl:
+    Value: !Ref FailedDispatchQueue
