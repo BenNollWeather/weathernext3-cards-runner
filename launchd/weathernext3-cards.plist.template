@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: replace RUNNER_DIR with the absolute path of this repository,
+     then copy to ~/Library/LaunchAgents/ and load with launchctl. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.weathernext3-cards</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- caffeinate keeps the Mac awake while a run is in progress -->
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>/bin/bash</string>
+    <string>RUNNER_DIR/bin/run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- Check for a new WNV3 run every hour -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>RUNNER_DIR/logs/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>RUNNER_DIR/logs/launchd.log</string>
+</dict>
+</plist>

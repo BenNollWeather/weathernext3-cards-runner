@@ -1,0 +1,84 @@
+name: WeatherNext 3 storm cards
+
+# Started on time by an AWS EventBridge rule through the GitHub API (see
+# aws/eventbridge-github-dispatch.yaml). GitHub's own cron can run hours late,
+# so it is kept only as a slow backup.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Re-render even if the newest run is already published"
+        required: false
+        default: false
+        type: boolean
+      upload_to_s3:
+        description: "Upload cards to S3"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    - cron: "41 */3 * * *"
+
+concurrency:
+  group: weathernext3-cards
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_REGION: us-east-1
+      AWS_PROFILE: ""
+      PYTHON_CMD: python
+      NOTEBOOK_PATH: ${{ github.workspace }}/notebook/weathernext3_cyclones.ipynb
+      WORK_DIR: /tmp/weathernext3_cards
+      MPLCONFIGDIR: /tmp/matplotlib
+      UPLOAD_TO_S3: ${{ github.event_name == 'schedule' || inputs.upload_to_s3 }}
+      PRODUCT_SCHEDULE: "hourly (EventBridge dispatch)"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Cache Natural Earth map data
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cartopy
+          key: cartopy-natural-earth-v1
+
+      - name: Configure temporary AWS credentials
+        if: env.UPLOAD_TO_S3 == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: weathernext3-cards-${{ github.run_id }}
+
+      - name: Render and publish cards
+        run: |
+          args=()
+          [[ "${{ inputs.force }}" == "true" ]] && args+=(--force)
+          [[ "${UPLOAD_TO_S3}" != "true" ]] && args+=(--no-upload)
+          bash bin/run "${args[@]}"
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weathernext3-cards-logs-${{ github.run_id }}
+          path: logs/*.log
+          if-no-files-found: ignore
+          retention-days: 3

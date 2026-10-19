@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Export this Mac's trusted root certificates (system + keychain) for AWS CLI.
+set -euo pipefail
+OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/ca-bundle.pem"
+{ security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain
+  security find-certificate -a -p /Library/Keychains/System.keychain; } > "${OUT}"
+echo "Wrote $(grep -c 'BEGIN CERTIFICATE' "${OUT}") certificates to ${OUT}"

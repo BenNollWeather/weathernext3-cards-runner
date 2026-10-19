@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_FILE="${PROJECT_DIR}/config/settings.env"
+LOG_DIR="${PROJECT_DIR}/logs"
+STATE_FILE="${LOG_DIR}/last_run.txt"
+mkdir -p "${LOG_DIR}"
+
+FORCE="false"
+NO_UPLOAD="false"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force) FORCE="true"; shift ;;
+    --no-upload) NO_UPLOAD="true"; shift ;;
+    -h|--help)
+      cat <<HELP
+Usage:
+  bash bin/run              render + upload cards for a new WNV3 run (skips if done)
+  bash bin/run --force      process the newest run even if already done
+  bash bin/run --no-upload  render only; print what would be uploaded
+HELP
+      exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+set -a
+# Machine-specific overrides first (not committed), then the shared defaults.
+# shellcheck disable=SC1090
+[[ -f "${PROJECT_DIR}/config/settings.local.env" ]] && source "${PROJECT_DIR}/config/settings.local.env"
+# shellcheck disable=SC1090
+source "${CONFIG_FILE}"
+set +a
+[[ -f "${AWS_CA_BUNDLE:-}" ]] || unset AWS_CA_BUNDLE   # fall back to default trust
+if [[ -n "${AWS_PROFILE:-}" ]]; then export AWS_PROFILE; else unset AWS_PROFILE; fi
+[[ -n "${AWS_CA_BUNDLE:-}" ]] && export AWS_CA_BUNDLE
+[[ -f "${NOTEBOOK_PATH}" ]] || NOTEBOOK_PATH="${PROJECT_DIR}/notebook/weathernext3_cyclones.ipynb"
+[[ "${NO_UPLOAD}" == "true" ]] && UPLOAD_TO_S3="false"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}" PYTHONUNBUFFERED=1
+
+STARTED_EPOCH=$(date -u +%s)
+STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# ---- newest run; skip if already processed --------------------------------
+RUN="${RUN_OVERRIDE:-}"
+if [[ -z "${RUN}" ]]; then
+  RUN="$("${PYTHON_CMD}" "${PROJECT_DIR}/scripts/run_cards.py" --check-only || true)"
+fi
+if [[ -z "${RUN}" ]]; then
+  echo "$(date -u +%FT%TZ) No WNV3 run found on Weather Lab; nothing to do."
+  exit 0
+fi
+PUBLISHED="$(curl -fsS --max-time 20 "${PUBLIC_LATEST_URL}?t=$(date +%s)" 2>/dev/null \
+  | "${PYTHON_CMD}" -c 'import json,sys; print(json.load(sys.stdin).get("run",""))' 2>/dev/null || true)"
+if [[ "${FORCE}" != "true" && "${SKIP_IF_DONE}" == "true" ]]; then
+  if [[ "${PUBLISHED}" == "${RUN}" ]] || \
+     [[ -f "${STATE_FILE}" && "$(cat "${STATE_FILE}")" == "${RUN}" ]]; then
+    echo "$(date -u +%FT%TZ) Run ${RUN} already published; skipping."
+    exit 0
+  fi
+fi
+
+LOG_FILE="${LOG_DIR}/cards_${RUN}.log"
+echo "$(date -u +%FT%TZ) Processing WNV3 ${RUN}; log: ${LOG_FILE}"
+
+report_status() {
+  local status="$1" message="$2" outputs_json="$3"
+  [[ "${UPLOAD_TO_S3}" == "true" ]] || return 0
+  local runtime=$(( $(date -u +%s) - STARTED_EPOCH ))
+  "${PYTHON_CMD}" "${PROJECT_DIR}/scripts/report_status.py" \
+    --product "${PRODUCT_ID}" --status "${status}" \
+    --started-utc "${STARTED_UTC}" --runtime-seconds "${runtime}" \
+    --schedule "${PRODUCT_SCHEDULE}" --outputs-json "${outputs_json}" \
+    --message "${message}" --output "${WORK_DIR}.status.json" >/dev/null
+  aws s3 cp "${WORK_DIR}.status.json" "${STATUS_S3_PREFIX%/}/${PRODUCT_ID}.json" \
+    --content-type application/json --cache-control no-cache --only-show-errors \
+    || echo "Status upload failed" >&2
+  rm -f "${WORK_DIR}.status.json"
+}
+
+# ---- render the cards from the notebook -----------------------------------
+MANIFEST="${WORK_DIR}/cards_manifest.json"
+# A hung run (e.g. a permission prompt nobody answers) is stopped after
+# RUN_TIMEOUT_SECONDS so it cannot block the following hourly checks.
+if ! perl -e 'alarm shift; exec @ARGV' "${RUN_TIMEOUT_SECONDS:-2700}" \
+      "${PYTHON_CMD}" "${PROJECT_DIR}/scripts/run_cards.py" \
+      --notebook "${NOTEBOOK_PATH}" --work-dir "${WORK_DIR}" \
+      --modes "${CARD_MODES}" --layouts "${CARD_LAYOUTS}" --run "${RUN}" \
+      --manifest "${MANIFEST}" > "${LOG_FILE}" 2>&1; then
+  echo "Card rendering failed; see ${LOG_FILE}" >&2
+  tail -20 "${LOG_FILE}" >&2
+  report_status failure "Card rendering failed for ${RUN}." "[]"
+  exit 1
+fi
+
+CARDS=()
+while IFS= read -r line; do CARDS+=("$line"); done < <(
+  "${PYTHON_CMD}" -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["cards"]]' "${MANIFEST}")
+echo "Rendered ${#CARDS[@]} card(s) for ${RUN}"
+
+# ---- upload to the fixed cards folder, then remove leftovers ---------------
+DEST="${S3_DEST%/}/"
+BUCKET="$(echo "${DEST}" | sed -E 's#^s3://([^/]+)/.*#\1#')"
+PREFIX="$(echo "${DEST}" | sed -E 's#^s3://[^/]+/##')"
+URLS=()
+NEW_NAMES=()
+for card in ${CARDS[@]+"${CARDS[@]}"}; do
+  name="$(basename "${card}")"
+  NEW_NAMES+=("${name}")
+  URLS+=("${PUBLIC_URL_BASE%/}/${name}")
+  if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
+    # Names are reused run to run, so keep caches short.
+    aws s3 cp "${card}" "${DEST}${name}" --content-type image/jpeg \
+      --cache-control "public, max-age=300" --only-show-errors
+  else
+    echo "[dry run] would upload ${card} -> ${DEST}${name}"
+  fi
+done
+
+# Cards left from earlier runs: anything in the folder not uploaded just now.
+EXISTING="$(aws s3api list-objects-v2 --bucket "${BUCKET}" --prefix "${PREFIX}" \
+  --query 'Contents[].Key' --output text 2>/dev/null || true)"
+STALE=()
+for key in ${EXISTING}; do
+  [[ "${key}" == "None" || "${key}" == "${PREFIX}" ]] && continue
+  keep="false"
+  for name in ${NEW_NAMES[@]+"${NEW_NAMES[@]}"}; do
+    [[ "${key}" == "${PREFIX}${name}" ]] && keep="true" && break
+  done
+  [[ "${keep}" == "false" ]] && STALE+=("${key}")
+done
+for key in ${STALE[@]+"${STALE[@]}"}; do
+  if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
+    aws s3 rm "s3://${BUCKET}/${key}" --only-show-errors
+    echo "Removed old card: ${key}"
+  else
+    echo "[dry run] would remove old card: s3://${BUCKET}/${key}"
+  fi
+done
+
+LATEST="${WORK_DIR}/latest.json"
+"${PYTHON_CMD}" - "${MANIFEST}" "${LATEST}" ${URLS[@]+"${URLS[@]}"} <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+latest = {"model": manifest["model"], "run": manifest["run"],
+          "generated_utc": manifest["generated_utc"],
+          "modes": manifest["modes"], "layouts": manifest["layouts"],
+          "cards": sys.argv[3:]}
+open(sys.argv[2], "w").write(json.dumps(latest, indent=2) + "\n")
+PY
+OUTPUTS_JSON="$("${PYTHON_CMD}" -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \
+  ${URLS[@]+"${URLS[@]}"})"
+if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
+  aws s3 cp "${LATEST}" "${S3_LATEST}" --content-type application/json \
+    --cache-control no-cache --only-show-errors
+  # Viewer page next to latest.json (reads it in the browser).
+  aws s3 cp "${PROJECT_DIR}/web/index.html" "$(dirname "${S3_LATEST}")/index.html" \
+    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
+  echo "Uploaded ${#CARDS[@]} card(s) to ${DEST}; removed ${#STALE[@]} old card(s); updated latest.json"
+  report_status success "Uploaded ${#CARDS[@]} card(s) for ${RUN}." "${OUTPUTS_JSON}"
+else
+  echo "[dry run] would upload ${LATEST} -> ${S3_LATEST}"
+  cat "${LATEST}"
+fi
+
+echo "${RUN}" > "${STATE_FILE}.tmp"
+if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
+  mv "${STATE_FILE}.tmp" "${STATE_FILE}"        # only mark done after a real upload
+else
+  rm -f "${STATE_FILE}.tmp"
+fi
+if [[ "${UPLOAD_TO_S3}" == "true" && "${DELETE_WORK_DIR_AFTER_UPLOAD}" == "true" ]]; then
+  rm -rf "${WORK_DIR}"
+fi
+echo "$(date -u +%FT%TZ) Done (${RUN})."

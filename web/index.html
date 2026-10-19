@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeatherNext 3 storm cards</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --ink: #111111; --muted: #5d6166;
+    --line: #e2e2de; --accent: #03afca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1013; --card: #171b20; --ink: #f2f2f2; --muted: #a3a9b0;
+            --line: #2a3038; --accent: #63c5ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.45 "Franklin ITC Std", "Libre Franklin", "Helvetica Neue", Arial, sans-serif; }
+  header { max-width: 1400px; margin: 0 auto; padding: 28px 24px 8px; }
+  h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.01em; }
+  .meta { color: var(--muted); font-size: 15px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  main { max-width: 1400px; margin: 0 auto; padding: 16px 24px 48px;
+         display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+  figure { margin: 0; background: var(--card); border: 1px solid var(--line);
+           border-radius: 8px; overflow: hidden; }
+  figure a.img { display: block; aspect-ratio: 3 / 2; background: var(--line); }
+  figure img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  figcaption { display: flex; justify-content: space-between; align-items: baseline;
+               gap: 12px; padding: 10px 14px 12px; }
+  figcaption .name { font-weight: 600; }
+  figcaption a { color: var(--accent); font-size: 14px; text-decoration: none; white-space: nowrap; }
+  figcaption a:hover, figcaption a:focus-visible { text-decoration: underline; }
+  .empty, .error { grid-column: 1 / -1; color: var(--muted); padding: 40px 0; text-align: center; }
+  footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--muted); font-size: 13px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WeatherNext 3 storm cards</h1>
+  <div class="meta" id="meta">Loading the latest cards…</div>
+</header>
+<main id="cards" aria-live="polite"></main>
+<footer>
+  Light-mode 3x2 cards, updated automatically after each WeatherNext 3 run.
+  Data: Google DeepMind. Card list: <a href="latest.json">latest.json</a>.
+</footer>
+<script>
+  const MONTHS = ["Jan.", "Feb.", "March", "April", "May", "June", "July",
+                  "Aug.", "Sept.", "Oct.", "Nov.", "Dec."];
+
+  // "2026_10_15T00_00" -> "00 UTC Oct. 15"
+  function runLabel(run) {
+    const m = /^(\d{4})_(\d{2})_(\d{2})T(\d{2})_/.exec(run || "");
+    return m ? `${m[4]} UTC ${MONTHS[+m[2] - 1]} ${+m[3]}` : run;
+  }
+
+  // "hurricane_trudy_country_winds_3x2_light.jpg" -> "Hurricane Trudy"
+  // "possible_atlantic_storm_4_..." -> "Possible storm: Atlantic"
+  function cardLabel(url) {
+    const stem = url.split("/").pop().replace(/_country_winds_.*$/, "");
+    const words = stem.split("_");
+    const nice = w => /^\d+[a-z]$/.test(w) ? w.toUpperCase()
+                     : w.charAt(0).toUpperCase() + w.slice(1);
+    if (words[0] === "possible") {
+      const basin = words.slice(1, words.indexOf("storm")).map(nice).join(" ");
+      return { text: `Possible storm: ${basin}`, possible: true };
+    }
+    return { text: words.map(nice).join(" "), possible: false };
+  }
+
+  async function load() {
+    const meta = document.getElementById("meta");
+    const grid = document.getElementById("cards");
+    try {
+      const res = await fetch(`latest.json?t=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const updated = new Date(data.generated_utc).toLocaleString([], {
+        weekday: "short", month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+      meta.innerHTML = `Model run <b>${runLabel(data.run)}</b> · ` +
+        `updated ${updated} · ${data.cards.length} card${data.cards.length === 1 ? "" : "s"}`;
+      grid.innerHTML = "";
+      if (!data.cards.length) {
+        grid.innerHTML = '<p class="empty">No storms threaten land in this run.</p>';
+        return;
+      }
+      // Designated storms first, then possible new storms.
+      const cards = data.cards.map(url => ({ url, ...cardLabel(url) }))
+        .sort((a, b) => a.possible - b.possible || a.text.localeCompare(b.text));
+      for (const c of cards) {
+        const bust = `${c.url}?run=${encodeURIComponent(data.run)}`;
+        const fig = document.createElement("figure");
+        fig.innerHTML =
+          `<a class="img" href="${bust}" target="_blank" rel="noopener">` +
+          `<img src="${bust}" alt="${c.text} storm card" loading="lazy"></a>` +
+          `<figcaption><span class="name">${c.text}</span>` +
+          `<a href="${bust}" download>Download</a></figcaption>`;
+        grid.appendChild(fig);
+      }
+    } catch (err) {
+      meta.textContent = "Could not load the latest cards.";
+      grid.innerHTML = `<p class="error">${err.message}</p>`;
+    }
+  }
+  load();
+</script>
+</body>
+</html>

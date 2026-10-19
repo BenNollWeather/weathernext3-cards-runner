@@ -1,0 +1,11 @@
+# Runtime output
+logs/*
+!logs/.gitkeep
+
+# Local/editor files
+.DS_Store
+.vscode/
+.idea/
+__pycache__/
+config/ca-bundle.pem
+config/settings.local.env

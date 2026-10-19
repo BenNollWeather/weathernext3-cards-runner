@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Starts a GitHub Actions workflow on time from an EventBridge schedule (GitHub's
+  own cron can be hours late). Deploy once per product; the first stack creates
+  the shared GitHub connection, later stacks reuse it via ExistingConnectionArn.
+
+Parameters:
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: >
+      Fine-grained GitHub token with "Actions: Read and write" on the runner
+      repositories. Only needed for the first stack (creates the connection).
+  ExistingConnectionArn:
+    Type: String
+    Default: ""
+    Description: Reuse the connection from an earlier stack (leave blank to create it).
+  Repository:
+    Type: String
+    Default: BenNollWeather/weathernext3-cards-runner
+  WorkflowFile:
+    Type: String
+    Default: cards.yml
+  Ref:
+    Type: String
+    Default: main
+  ScheduleExpression:
+    Type: String
+    Default: "cron(5 * * * ? *)"
+    Description: EventBridge schedule (UTC). Default is 5 minutes past every hour.
+  RuleName:
+    Type: String
+    Default: weathernext3-cards-dispatch
+
+Conditions:
+  CreateConnection: !Equals [!Ref ExistingConnectionArn, ""]
+
+Resources:
+  GitHubConnection:
+    Type: AWS::Events::Connection
+    Condition: CreateConnection
+    Properties:
+      Name: github-workflow-dispatch
+      Description: GitHub API token for workflow_dispatch calls
+      AuthorizationType: API_KEY
+      AuthParameters:
+        ApiKeyAuthParameters:
+          ApiKeyName: Authorization
+          ApiKeyValue: !Sub "Bearer ${GitHubToken}"
+        InvocationHttpParameters:
+          HeaderParameters:
+            - Key: Accept
+              Value: application/vnd.github+json
+            - Key: X-GitHub-Api-Version
+              Value: "2022-11-28"
+
+  DispatchDestination:
+    Type: AWS::Events::ApiDestination
+    Properties:
+      Name: !Sub "${RuleName}-destination"
+      ConnectionArn: !If [CreateConnection, !GetAtt GitHubConnection.Arn, !Ref ExistingConnectionArn]
+      HttpMethod: POST
+      InvocationEndpoint: !Sub "https://api.github.com/repos/${Repository}/actions/workflows/${WorkflowFile}/dispatches"
+      InvocationRateLimitPerSecond: 1
+
+  InvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-github-dispatch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: events:InvokeApiDestination
+                Resource: !GetAtt DispatchDestination.Arn
+
+  DispatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref RuleName
+      Description: !Sub "Dispatch ${Repository} ${WorkflowFile} on schedule"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: github-workflow-dispatch
+          Arn: !GetAtt DispatchDestination.Arn
+          RoleArn: !GetAtt InvokeRole.Arn
+          Input: !Sub '{"ref": "${Ref}"}'
+          RetryPolicy:
+            MaximumRetryAttempts: 3
+            MaximumEventAgeInSeconds: 900
+
+Outputs:
+  ConnectionArn:
+    Description: Pass as ExistingConnectionArn when adding other products.
+    Value: !If [CreateConnection, !GetAtt GitHubConnection.Arn, !Ref ExistingConnectionArn]
+  RuleName:
+    Value: !Ref DispatchRule

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Copy the working notebook into notebook/ with outputs stripped and local paths
+# replaced by repo-relative ones, so the public copy carries nothing personal.
+#   bash bin/sync-notebook /path/to/weathernext3_cyclones.ipynb
+# (or set NOTEBOOK_SOURCE in config/settings.local.env)
+set -euo pipefail
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCAL="${PROJECT_DIR}/config/settings.local.env"
+# shellcheck disable=SC1090
+[[ -f "${LOCAL}" ]] && source "${LOCAL}"
+SRC="${1:-${NOTEBOOK_SOURCE:-}}"
+[[ -n "${SRC}" && -f "${SRC}" ]] || { echo "Usage: bash bin/sync-notebook /path/to/notebook.ipynb" >&2; exit 1; }
+DEST="${PROJECT_DIR}/notebook/weathernext3_cyclones.ipynb"
+python3 - "${SRC}" "${DEST}" <<'PY'
+import json, re, sys
+nb = json.load(open(sys.argv[1]))
+public_paths = [
+    (r'SAVE_DIR = "[^"]*"', 'SAVE_DIR = "/tmp/weathernext3"'),
+    (r'FONT_DIR = "[^"]*"', 'FONT_DIR = "assets/fonts"'),
+    (r'"[^"]*/GL250515_lam/GL250515_lam\.shp"',
+     '"assets/shapefiles/GL250515_lam/GL250515_lam.shp"'),
+    (r'"/(?:Users|home)/[^/"]+/[^"]*shapefiles/"', '"assets/shapefiles/"'),
+    (r'/(?:Users|home)/[^/"\s]+', '~'),        # anything else under a home dir
+]
+for cell in nb["cells"]:
+    src = "".join(cell["source"])
+    for pattern, repl in public_paths:
+        src = re.sub(pattern, repl, src)
+    cell["source"] = src.splitlines(keepends=True)
+    if cell["cell_type"] == "code":
+        cell["outputs"], cell["execution_count"] = [], None
+open(sys.argv[2], "w").write(json.dumps(nb, indent=1, ensure_ascii=False) + "\n")
+PY
+if grep -qE "/Users/|/home/" "${DEST}"; then
+  echo "Warning: a home-directory path is still in ${DEST}" >&2
+fi
+echo "Synced $(basename "${SRC}") -> notebook/ ($(du -h "${DEST}" | cut -f1))"

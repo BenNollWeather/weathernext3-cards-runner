@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WriteWeatherNext3Cards",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bennollweather/climate_imagery/weathernext3/*",
+        "arn:aws:s3:::bennollweather/climate_imagery/status/weathernext3-cards.json"
+      ]
+    },
+    {
+      "Sid": "ListWeatherNext3Cards",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::bennollweather",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "climate_imagery/weathernext3/cards/*"
+          ]
+        }
+      }
+    }
+  ]
+}
