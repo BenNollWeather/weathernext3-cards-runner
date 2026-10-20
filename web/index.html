@@ -20,6 +20,11 @@
   h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.01em; }
   .meta { color: var(--muted); font-size: 15px; }
   .meta b { color: var(--ink); font-weight: 600; }
+  nav { margin: 12px 0 4px; display: flex; flex-wrap: wrap; gap: 8px; }
+  nav a { color: inherit; text-decoration: none; font-size: 15px; border: 1px solid var(--line);
+          border-radius: 999px; padding: 7px 11px; background: var(--card); }
+  nav a:hover, nav a:focus-visible { text-decoration: underline; }
+  nav a[aria-current="page"] { border-color: var(--accent); }
   main { max-width: 1400px; margin: 0 auto; padding: 16px 24px 48px;
          display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
   figure { margin: 0; background: var(--card); border: 1px solid var(--line);
@@ -39,6 +44,15 @@
 <body>
 <header>
   <h1>WeatherNext 3 storm cards</h1>
+  <nav aria-label="Graphics portal">
+    <a href="/copernicus_imagery/index.html">All graphics</a>
+    <a href="/climate_imagery/weathernext3/index.html" aria-current="page">DeepMind storm cards</a>
+    <a href="/copernicus_imagery/index.html">C3S</a>
+    <a href="/copernicus_imagery/snow/index.html">Snow heatmaps</a>
+    <a href="/nmme/imagery/index.html">NMME</a>
+    <a href="/atmospheric_moisture/index.html">ERA5 moisture</a>
+    <a href="/climate_imagery/index.html">Climate imagery</a>
+  </nav>
   <div class="meta" id="meta">Loading the latest cards…</div>
 </header>
 <main id="cards" aria-live="polite"></main>
