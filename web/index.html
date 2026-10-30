@@ -47,15 +47,15 @@
 <header>
   <h1>WeatherNext 3 storm cards</h1>
   <nav aria-label="Graphics portal">
-    <a href="/copernicus_imagery/index.html">All graphics</a>
-    <a href="/latest_posts">Latest posts</a>
-    <a href="/climate_imagery/weathernext3/index.html" aria-current="page">DeepMind storm cards</a>
-    <a href="/copernicus_imagery/index.html">C3S</a>
-    <a href="/copernicus_imagery/snow/index.html">Snow heatmaps</a>
-    <a href="/nmme/imagery/index.html">NMME</a>
-    <a href="/atmospheric_moisture/index.html">ERA5 moisture</a>
-    <a href="/climate_imagery/index.html">Climate imagery</a>
-    <a href="/climate_imagery/strat_coupling/index.html">Polar vortex</a>
+    <a href="/copernicus">All graphics</a>
+    <a href="/">Latest posts</a>
+    <a href="/deepmind" aria-current="page">DeepMind storm cards</a>
+    <a href="/copernicus">C3S</a>
+    <a href="/snow">Snow heatmaps</a>
+    <a href="/nmme">NMME</a>
+    <a href="/moisture">ERA5 moisture</a>
+    <a href="/climate">Climate imagery</a>
+    <a href="/polar_vortex">Polar vortex</a>
     <a href="/newsletter">Newsletter</a>
   </nav>
   <div class="meta" id="meta">Loading the latest cards…</div>
@@ -63,7 +63,7 @@
 <main id="cards" aria-live="polite"></main>
 <footer>
   Updated automatically after each WeatherNext 3 run.
-  Data: Google DeepMind. Card list: <a href="latest.json">latest.json</a>.
+  Data: Google DeepMind. Card list: <a href="/climate_imagery/weathernext3/latest.json">latest.json</a>.
 </footer>
 <script>
   const MONTHS = ["Jan.", "Feb.", "March", "April", "May", "June", "July",
@@ -93,7 +93,7 @@
     const meta = document.getElementById("meta");
     const grid = document.getElementById("cards");
     try {
-      const res = await fetch(`latest.json?t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/climate_imagery/weathernext3/latest.json?t=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const updated = new Date(data.generated_utc).toLocaleString([], {
