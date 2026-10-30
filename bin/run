@@ -157,6 +157,9 @@ if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
   # Viewer page next to latest.json (reads it in the browser).
   aws s3 cp "${PROJECT_DIR}/web/index.html" "$(dirname "${S3_LATEST}")/index.html" \
     --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
+  short_host="${S3_LATEST#s3://}"
+  aws s3 cp "${PROJECT_DIR}/web/index.html" "s3://${short_host%%/*}/deepmind" \
+    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
   echo "Uploaded ${#CARDS[@]} card(s) to ${DEST}; removed ${#STALE[@]} old card(s); updated latest.json"
   report_status success "Uploaded ${#CARDS[@]} card(s) for ${RUN}." "${OUTPUTS_JSON}"
 else
