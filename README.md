@@ -11,8 +11,10 @@ reaching the region's headline category, and the range of peak winds.
 
 ## Published output
 
-- Viewer page: https://bennollweather.s3.amazonaws.com/climate_imagery/weathernext3/index.html
+- Viewer page: https://benweather.com/graphics/deepmind
 - Current card list: https://bennollweather.s3.amazonaws.com/climate_imagery/weathernext3/latest.json
+
+The page requests that card list by its full `/climate_imagery/weathernext3/latest.json` path. A relative `latest.json` is loaded from `/graphics/deepmind/latest.json`, which is not public, and the grid stays empty.
 
 ## How it works
 
@@ -22,8 +24,8 @@ forced: light mode, 3x2 layout, a disposable working folder, no inline display.
 
 Each run of `bin/run`:
 
-1. Finds the newest WNV3 run on Weather Lab. If it already appears in the public
-   `latest.json`, it stops.
+1. Finds the newest WNV3 run on Weather Lab. If that run is already published,
+   it still uploads `web/index.html` and then stops.
 2. Renders the cards.
 3. Uploads them to a fixed S3 folder (`.../weathernext3/cards/`; the same storm
    keeps the same file name), then removes cards left from the previous run.

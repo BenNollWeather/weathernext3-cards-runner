@@ -42,6 +42,32 @@ export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}" PYTHONUNBUFFERED=1
 STARTED_EPOCH=$(date -u +%s)
 STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# The public address is /graphics/deepmind. A relative latest.json is requested
+# as /graphics/deepmind/latest.json, and that key is not public, so the grid
+# stays empty. The page has to name the real card list.
+publish_viewer_page() {
+  local page="${PROJECT_DIR}/web/index.html"
+  local short_host
+  if ! grep -F -q '/climate_imagery/weathernext3/latest.json' "${page}"; then
+    echo "Viewer page is missing /climate_imagery/weathernext3/latest.json" >&2
+    exit 1
+  fi
+  if grep -F -q 'href="latest.json"' "${page}" || grep -F -q 'fetch(`latest.json' "${page}"; then
+    echo "Viewer page requests latest.json relative to the page address" >&2
+    exit 1
+  fi
+  if [[ "${UPLOAD_TO_S3}" != "true" ]]; then
+    echo "[dry run] would upload viewer page ${page}"
+    return 0
+  fi
+  aws s3 cp "${page}" "$(dirname "${S3_LATEST}")/index.html" \
+    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
+  short_host="${S3_LATEST#s3://}"
+  aws s3 cp "${page}" "s3://${short_host%%/*}/deepmind" \
+    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
+  echo "Uploaded viewer page"
+}
+
 # ---- newest run; skip if already processed --------------------------------
 RUN="${RUN_OVERRIDE:-}"
 if [[ -z "${RUN}" ]]; then
@@ -56,7 +82,8 @@ PUBLISHED="$(curl -fsS --max-time 20 "${PUBLIC_LATEST_URL}?t=$(date +%s)" 2>/dev
 if [[ "${FORCE}" != "true" && "${SKIP_IF_DONE}" == "true" ]]; then
   if [[ "${PUBLISHED}" == "${RUN}" ]] || \
      [[ -f "${STATE_FILE}" && "$(cat "${STATE_FILE}")" == "${RUN}" ]]; then
-    echo "$(date -u +%FT%TZ) Run ${RUN} already published; skipping."
+    echo "$(date -u +%FT%TZ) Run ${RUN} already published; refreshing the viewer page."
+    publish_viewer_page
     exit 0
   fi
 fi
@@ -154,16 +181,12 @@ OUTPUTS_JSON="$("${PYTHON_CMD}" -c 'import json,sys; print(json.dumps(sys.argv[1
 if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
   aws s3 cp "${LATEST}" "${S3_LATEST}" --content-type application/json \
     --cache-control no-cache --only-show-errors
-  # Viewer page next to latest.json (reads it in the browser).
-  aws s3 cp "${PROJECT_DIR}/web/index.html" "$(dirname "${S3_LATEST}")/index.html" \
-    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
-  short_host="${S3_LATEST#s3://}"
-  aws s3 cp "${PROJECT_DIR}/web/index.html" "s3://${short_host%%/*}/deepmind" \
-    --content-type "text/html; charset=utf-8" --cache-control no-cache --only-show-errors
+  publish_viewer_page
   echo "Uploaded ${#CARDS[@]} card(s) to ${DEST}; removed ${#STALE[@]} old card(s); updated latest.json"
   report_status success "Uploaded ${#CARDS[@]} card(s) for ${RUN}." "${OUTPUTS_JSON}"
 else
   echo "[dry run] would upload ${LATEST} -> ${S3_LATEST}"
+  publish_viewer_page
   cat "${LATEST}"
 fi
 
